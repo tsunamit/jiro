@@ -14,6 +14,12 @@ def main():
         assistant.input_handler(user_input)
 
 
+def test_command_line_defaults() -> None:
+    assistant = Jiro()
+    assert assistant.get_intent("quit") == QUIT_INTENT
+    assert assistant.get_intent("exit") == QUIT_INTENT
+    assert assistant.get_intent("test") == RUN_TEST
+
 
 class Jiro:
     def __init__(self):
@@ -30,7 +36,7 @@ class Jiro:
         elif intent == UNKNOWN_INTENT:
             print("Unrecognized intent")
         elif intent == RUN_TEST:
-            self.tensorflow()
+            print("running test")
         else:
             print("Invalid intent state")
 
@@ -45,6 +51,7 @@ class Jiro:
             return RUN_TEST
         else:
             return UNKNOWN_INTENT
+    
 
 
 RUN_TEST = "RunTest"
