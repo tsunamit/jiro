@@ -20,10 +20,9 @@ def main():
         assistant.input_handler(user_input)
 
 
-def get_day_analytics(target_date):
+def get_day_analytics():
     auth_credentials = authenticate_with_calendar_api()
-    query_date = date_to_date_query_transformer(target_date)
-    events = get_events_on_day(query_date, auth_credentials)
+    events = get_events_on_day(auth_credentials)
     simplified_events = map(lambda event: event_transformer(event), events)
 
     if not simplified_events:
@@ -55,13 +54,20 @@ def authenticate_with_calendar_api():
 def date_to_date_query_transformer(target_date):
     return target_date
 
-def get_events_on_day(query_date, auth_credentials):
+def get_events_on_day(auth_credentials):
     service = build('calendar', 'v3', credentials=auth_credentials)
 
-    now = datetime.datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
+    # get todays date
+    today = datetime.datetime.today()
+    today_start = datetime.datetime(
+        today.year, today.month, today.day, 
+        0, 0, 0, 0, None).isoformat() + 'Z'
+    today_end = datetime.datetime(
+        today.year, today.month, today.day, 
+        23, 59, 59, 59, None).isoformat() + 'Z'
 
-    events_result = service.events().list(calendarId='primary', timeMin=now,
-                                        maxResults=10, singleEvents=True,
+    events_result = service.events().list(calendarId='primary', timeMin=today_start,
+                                        timeMax=today_end, maxResults=10, singleEvents=True,
                                         orderBy='startTime').execute()
 
     return events_result.get('items', [])
@@ -74,6 +80,7 @@ def event_transformer(event):
 
 def test_command_line_defaults() -> None:
     assistant = Jiro()
+    assert assistant.get_intent("events today") == EVENTS_TODAY 
     assert assistant.get_intent("quit") == QUIT_INTENT
     assert assistant.get_intent("exit") == QUIT_INTENT
     assert assistant.get_intent("test") == RUN_TEST
@@ -95,7 +102,9 @@ class Jiro:
             print("Unrecognized intent")
         elif intent == RUN_TEST:
             print("running test")
-            get_day_analytics(None)
+            get_day_analytics()
+        elif intent == EVENTS_TODAY:
+            get_day_analytics()
         else:
             print("Invalid intent state")
 
@@ -108,13 +117,15 @@ class Jiro:
             return QUIT_INTENT 
         elif input_string == "test":
             return RUN_TEST
+        elif input_string == "events today":
+            return EVENTS_TODAY
         else:
             return UNKNOWN_INTENT
     
 
 
 RUN_TEST = "RunTest"
-PROCESS_IMAGE_INTENT = "ProcessImage"
+EVENTS_TODAY = "EventsToday"
 QUIT_INTENT = "Quit"
 UNKNOWN_INTENT = "Unknown"
 
