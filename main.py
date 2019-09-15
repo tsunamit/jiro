@@ -1,4 +1,10 @@
 import sys
+import datetime
+import pickle
+import os.path
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 
 def main():
@@ -13,6 +19,58 @@ def main():
 
         assistant.input_handler(user_input)
 
+
+def get_day_analytics(target_date):
+    auth_credentials = authenticate_with_calendar_api()
+    query_date = date_to_date_query_transformer(target_date)
+    events = get_events_on_day(query_date, auth_credentials)
+    simplified_events = map(lambda event: event_transformer(event), events)
+
+    if not simplified_events:
+        print('No upcoming events found.')
+    for event in simplified_events:
+        print(event)
+
+def authenticate_with_calendar_api():
+    creds = None
+    scopes = ['https://www.googleapis.com/auth/calendar.readonly']
+
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json',
+                scopes
+            )
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    
+    return creds
+
+def date_to_date_query_transformer(target_date):
+    return target_date
+
+def get_events_on_day(query_date, auth_credentials):
+    service = build('calendar', 'v3', credentials=auth_credentials)
+
+    now = datetime.datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
+
+    events_result = service.events().list(calendarId='primary', timeMin=now,
+                                        maxResults=10, singleEvents=True,
+                                        orderBy='startTime').execute()
+
+    return events_result.get('items', [])
+
+def event_transformer(event):
+    return {
+        'id': event['id'],
+        'summary': event['summary'],
+    }
 
 def test_command_line_defaults() -> None:
     assistant = Jiro()
@@ -37,6 +95,7 @@ class Jiro:
             print("Unrecognized intent")
         elif intent == RUN_TEST:
             print("running test")
+            get_day_analytics(None)
         else:
             print("Invalid intent state")
 
