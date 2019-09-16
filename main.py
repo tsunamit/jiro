@@ -20,15 +20,32 @@ def main():
         assistant.input_handler(user_input)
 
 
+class DayAnalytics:
+    def __init__(self, total_committed_time=0):
+        self.total_committed_time = total_committed_time
+
+    def getCommittedHours(self):
+        return self.total_committed_time / 3600.0
+
 def get_day_analytics():
     auth_credentials = authenticate_with_calendar_api()
-    events = get_events_on_day(auth_credentials)
+
+    # filter for non-all day events
+    events = filter(
+        lambda event: 'dateTime' in event['start'],
+        get_events_on_day(auth_credentials)
+    )
     simplified_events = map(lambda event: event_transformer(event), events)
+
+    day_analytics = DayAnalytics()
 
     if not simplified_events:
         print('No upcoming events found.')
     for event in simplified_events:
-        print(event)
+        event_length_seconds = (event['end'] - event['start']).seconds
+        day_analytics.total_committed_time += event_length_seconds
+
+    print(f"Total committed hours: {day_analytics.getCommittedHours()}")
 
 def authenticate_with_calendar_api():
     creds = None
@@ -51,24 +68,41 @@ def authenticate_with_calendar_api():
     
     return creds
 
-def date_to_date_query_transformer(target_date):
-    return target_date
-
-def get_events_on_day(auth_credentials):
+def get_events_on_day(auth_credentials, max_events: int = 100):
     service = build('calendar', 'v3', credentials=auth_credentials)
 
     # get todays date
-    today = datetime.datetime.today()
-    today_start = datetime.datetime(
-        today.year, today.month, today.day, 
-        0, 0, 0, 0, None).isoformat() + 'Z'
-    today_end = datetime.datetime(
-        today.year, today.month, today.day, 
-        23, 59, 59, 59, None).isoformat() + 'Z'
+    today_date_object = datetime.datetime.today()
 
-    events_result = service.events().list(calendarId='primary', timeMin=today_start,
-                                        timeMax=today_end, maxResults=10, singleEvents=True,
-                                        orderBy='startTime').execute()
+    today_start = datetime.datetime(
+        today_date_object.year, 
+        today_date_object.month, 
+        today_date_object.day, 
+        hour=0, 
+        minute=0, 
+        second=0, 
+        microsecond=0, 
+        tzinfo=None
+    ).isoformat() + 'Z'
+    today_end = datetime.datetime(
+        today_date_object.year, 
+        today_date_object.month, 
+        today_date_object.day, 
+        hour=23, 
+        minute=59, 
+        second=59, 
+        microsecond=59, 
+        tzinfo=None
+    ).isoformat() + 'Z'
+
+    events_result = service.events().list(
+        calendarId='primary', 
+        timeMin=today_start, 
+        timeMax=today_end, 
+        maxResults=10, 
+        singleEvents=True, 
+        orderBy='startTime'
+    ).execute()
 
     return events_result.get('items', [])
 
@@ -76,6 +110,16 @@ def event_transformer(event):
     return {
         'id': event['id'],
         'summary': event['summary'],
+
+        # strip timezone off of the string and parse as datetime 
+        'start': datetime.datetime.strptime(
+            event['start']['dateTime'][:-6], 
+            '%Y-%m-%dT%H:%M:%S'
+        ),
+        'end': datetime.datetime.strptime(
+            event['end']['dateTime'][:-6], 
+            '%Y-%m-%dT%H:%M:%S'
+        ),
     }
 
 def test_command_line_defaults() -> None:
