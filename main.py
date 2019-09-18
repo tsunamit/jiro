@@ -1,5 +1,6 @@
 import sys
 import datetime
+import pytz
 import pickle
 import os.path
 from googleapiclient.discovery import build
@@ -27,13 +28,14 @@ class DayAnalytics:
     def getCommittedHours(self):
         return self.total_committed_time / 3600.0
 
-def get_day_analytics():
+
+def get_day_analytics(target_date: datetime):
     auth_credentials = authenticate_with_calendar_api()
 
     # filter for non-all day events
     events = filter(
         lambda event: 'dateTime' in event['start'],
-        get_events_on_day(auth_credentials)
+        get_events_on_day(target_date, auth_credentials)
     )
     simplified_events = map(lambda event: event_transformer(event), events)
 
@@ -43,9 +45,13 @@ def get_day_analytics():
         print('No upcoming events found.')
     for event in simplified_events:
         event_length_seconds = (event['end'] - event['start']).seconds
+        event_synopsis_string = f"{event['summary']}: {event_length_seconds / 3600.0}h"
+
+        print(event_synopsis_string)
         day_analytics.total_committed_time += event_length_seconds
 
     print(f"Total committed hours: {day_analytics.getCommittedHours()}")
+
 
 def authenticate_with_calendar_api():
     creds = None
@@ -68,43 +74,41 @@ def authenticate_with_calendar_api():
     
     return creds
 
-def get_events_on_day(auth_credentials, max_events: int = 100):
+
+def get_events_on_day(target_date_object: datetime, auth_credentials, max_events: int = 100):
     service = build('calendar', 'v3', credentials=auth_credentials)
 
-    # get todays date
-    today_date_object = datetime.datetime.today()
-
-    today_start = datetime.datetime(
-        today_date_object.year, 
-        today_date_object.month, 
-        today_date_object.day, 
+    date_start = datetime.datetime(
+        target_date_object.year, 
+        target_date_object.month, 
+        target_date_object.day, 
         hour=0, 
         minute=0, 
         second=0, 
-        microsecond=0, 
-        tzinfo=None
-    ).isoformat() + 'Z'
-    today_end = datetime.datetime(
-        today_date_object.year, 
-        today_date_object.month, 
-        today_date_object.day, 
+        tzinfo=TIME_ZONE
+    ).isoformat()
+    date_end = datetime.datetime(
+        target_date_object.year, 
+        target_date_object.month, 
+        target_date_object.day, 
         hour=23, 
         minute=59, 
         second=59, 
-        microsecond=59, 
-        tzinfo=None
-    ).isoformat() + 'Z'
+        tzinfo=TIME_ZONE
+    ).isoformat()
 
     events_result = service.events().list(
         calendarId='primary', 
-        timeMin=today_start, 
-        timeMax=today_end, 
+        timeMin=date_start, 
+        timeMax=date_end, 
+        timeZone=PACIFIC_TZ,
         maxResults=10, 
         singleEvents=True, 
-        orderBy='startTime'
+        orderBy='startTime',
     ).execute()
 
     return events_result.get('items', [])
+
 
 def event_transformer(event):
     return {
@@ -122,12 +126,23 @@ def event_transformer(event):
         ),
     }
 
+
 def test_command_line_defaults() -> None:
     assistant = Jiro()
     assert assistant.get_intent("events today") == EVENTS_TODAY 
     assert assistant.get_intent("quit") == QUIT_INTENT
     assert assistant.get_intent("exit") == QUIT_INTENT
     assert assistant.get_intent("test") == RUN_TEST
+
+
+def test_get_events_on_day() -> None:
+    auth_credentials = authenticate_with_calendar_api()
+    test_day_events = get_events_on_day(datetime.datetime(year=2019, month=2, day=3), auth_credentials)
+
+    assert len(test_day_events) == 2
+    assert test_day_events[0]['summary'] == "Test event 1"
+    assert test_day_events[1]['summary'] == "Test event 2"
+
 
 
 class Jiro:
@@ -146,9 +161,22 @@ class Jiro:
             print("Unrecognized intent")
         elif intent == RUN_TEST:
             print("running test")
-            get_day_analytics()
-        elif intent == EVENTS_TODAY:
-            get_day_analytics()
+            # TODO: do some date parsing
+            sys.stdout.write("Enter date: ")
+            sys.stdout.flush()
+            date_user_input: str = sys.stdin.readline().rstrip()
+            target_date: datetime = None
+
+            if date_user_input == "today":
+                target_date = datetime.datetime.today()
+            else:
+                try:
+                    target_date = datetime.datetime.strptime(date_user_input, "%Y-%m-%d")
+                except:
+                    print("Unrecognized date... exiting")
+                    return
+
+            get_day_analytics(target_date)
         else:
             print("Invalid intent state")
 
@@ -172,6 +200,9 @@ RUN_TEST = "RunTest"
 EVENTS_TODAY = "EventsToday"
 QUIT_INTENT = "Quit"
 UNKNOWN_INTENT = "Unknown"
+PACIFIC_TZ = "US/Pacific"
+TIME_ZONE = pytz.timezone('US/Pacific')
+# TIME_ZONE = None
 
 if __name__ == "__main__":
     main()
