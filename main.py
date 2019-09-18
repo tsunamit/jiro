@@ -184,7 +184,8 @@ def event_transformer(event):
 
 def test_command_line_defaults() -> None:
     assistant = Jiro()
-    assert assistant.get_intent("events") == EVENTS 
+    assert assistant.get_intent("analyze week") == ANALYZE_WEEK_INTENT 
+    assert assistant.get_intent("events") == EVENTS_INTENT 
     assert assistant.get_intent("quit") == QUIT_INTENT
     assert assistant.get_intent("exit") == QUIT_INTENT
     assert assistant.get_intent("test") == RUN_TEST
@@ -221,8 +222,13 @@ class Jiro:
             quit(0)
         elif intent == UNKNOWN_INTENT:
             print("Unrecognized intent")
-        elif intent == EVENTS:
+        elif intent == EVENTS_INTENT:
             run_calendar_cmdline()
+        elif intent == ANALYZE_WEEK_INTENT:
+            print("\nAnalyzing your week...\n")
+            time_now = datetime.datetime.now()
+            get_calendar_analytics(time_now, time_now + datetime.timedelta(days=7))
+            print("\n")
         elif intent == RUN_TEST:
             print("running test")
         else:
@@ -238,14 +244,17 @@ class Jiro:
         elif input_string == "test":
             return RUN_TEST
         elif input_string == "events":
-            return EVENTS
+            return EVENTS_INTENT
+        elif input_string == "analyze week":
+            return ANALYZE_WEEK_INTENT
         else:
             return UNKNOWN_INTENT
     
 
 
 RUN_TEST = "RunTest"
-EVENTS = "EventsToday"
+EVENTS_INTENT = "EventsToday"
+ANALYZE_WEEK_INTENT = "AnalyzeWeek"
 QUIT_INTENT = "Quit"
 UNKNOWN_INTENT = "Unknown"
 PACIFIC_TZ = "US/Pacific"
