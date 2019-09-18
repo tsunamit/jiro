@@ -7,12 +7,15 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
-
 calendar_module_auth_credentials = None
+tasks_calendar_id: str = None
+calendar_endpoint = None
 
+# TODO: read and decrypt task events to add to the day analysis
 
 def main():
     assistant = Jiro()
+
     # TODO: consider moving this to Jiro or the calendar module
     initialize_calendar_module()
     run_tests()
@@ -26,9 +29,19 @@ def main():
         assistant.input_handler(user_input)
 
 
-def initialize_calendar_module():
+def initialize_calendar_module() -> None:
     global calendar_module_auth_credentials
+    global calendar_endpoint
+    global tasks_calendar_id
+
     calendar_module_auth_credentials = authenticate_with_calendar_api()
+
+    calendar_endpoint = build('calendar', 'v3', credentials=calendar_module_auth_credentials)
+    calendar_list = calendar_endpoint.calendarList().list().execute()
+    for calendar in calendar_list['items']:
+        if calendar['summary'] == "tasks":
+            tasks_calendar_id = calendar['id']
+            print("Identified tasks calendar!")
 
 
 class DayAnalytics:
@@ -39,7 +52,7 @@ class DayAnalytics:
         return self.total_committed_time / 3600.0
 
 
-def run_calendar_cmdline():
+def run_calendar_cmdline() -> None:
     # TODO: do some date parsing
     target_start_date: datetime = None
     target_end_date: datetime = None
@@ -75,13 +88,28 @@ def run_calendar_cmdline():
     get_calendar_analytics(target_start_date, target_end_date)
 
 
+def run_task_manager_cmdline() -> None:
+    sys.stdout.write("Task name: ")
+    sys.stdout.flush()
+    task_name: str = sys.stdin.readline().rstrip()
+
+    sys.stdout.write("Task date: ")
+    sys.stdout.flush()
+    # TODO: finish getting date and finish modding task manager to acceept date as a param 
+    task_date: str = helper_parse_input_for_date(sys.stdin.readline().rstrip())
+
+    sys.stdout.write("Task cost: ")
+    sys.stdout.flush()
+    task_hours: float = float(sys.stdin.readline().rstrip())
+    
+
 def get_calendar_analytics(target_start_date: datetime, target_end_date: datetime = None):
     if target_end_date == None:
         target_end_date = target_start_date
 
     # filter for non-all day events
     events = filter(
-        lambda event: 'dateTime' in event['start'],
+        lambda event: 'dateTime' in event['start'] or helper_event_is_task(event),
         get_events(target_start_date, target_end_date, calendar_module_auth_credentials)
     )
     simplified_events = map(lambda event: event_transformer(event), events)
@@ -102,7 +130,7 @@ def get_calendar_analytics(target_start_date: datetime, target_end_date: datetim
 
 def authenticate_with_calendar_api():
     creds = None
-    scopes = ['https://www.googleapis.com/auth/calendar.readonly']
+    scopes = ['https://www.googleapis.com/auth/calendar']
 
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
@@ -127,9 +155,8 @@ def get_events(
     target_date_end: datetime,
     auth_credentials, 
     max_events: int = 100, 
+    calendar_id = None,
 ):
-    service = build('calendar', 'v3', credentials=auth_credentials)
-    
     # If no end date supplied, default to the start date so we fetch the day 
     if target_date_end == None:
         target_date_end = target_date_start
@@ -153,7 +180,7 @@ def get_events(
         tzinfo=TIME_ZONE
     ).isoformat()
 
-    events_result = service.events().list(
+    primary_calendar_events_result = calendar_endpoint.events().list(
         calendarId='primary', 
         timeMin=date_start, 
         timeMax=date_end, 
@@ -162,24 +189,88 @@ def get_events(
         orderBy='startTime',
     ).execute()
 
-    return events_result.get('items', [])
+    tasks_calendar_events_result = calendar_endpoint.events().list(
+        calendarId=tasks_calendar_id, 
+        timeMin=date_start, 
+        timeMax=date_end, 
+        maxResults=10, 
+        singleEvents=True, 
+        orderBy='startTime',
+    ).execute()
+
+    return primary_calendar_events_result['items'] + tasks_calendar_events_result['items']
+
+
+def add_task(
+    task_name: str, 
+    task_date: datetime, 
+    task_duration: float 
+) -> None:
+    print("\nCreating event...")
+
+    task_event_name = f"TASK//{task_name}//{task_duration}"
+    new_event_resource = {
+        'summary': task_event_name,
+        'start': {
+            'date': task_date.strftime("%Y-%m-%d")
+        },
+        'end': {
+            'date': (task_date + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        },
+    }
+    new_event = calendar_endpoint.events().insert(
+        calendarId=tasks_calendar_id,
+        body=new_event_resource
+    ).execute()
+
+    print(f"Done creating event {new_event['summary']}!\n")
+
+
 
 
 def event_transformer(event):
-    return {
-        'id': event['id'],
-        'summary': event['summary'],
+    if helper_event_is_task(event):
+        # parse the task title to get the information
+        task_event_summary: str = event['summary']
+        task_information_splits = task_event_summary.split('//')
 
-        # strip timezone off of the string and parse as datetime 
-        'start': datetime.datetime.strptime(
-            event['start']['dateTime'][:-6], 
-            '%Y-%m-%dT%H:%M:%S'
-        ),
-        'end': datetime.datetime.strptime(
-            event['end']['dateTime'][:-6], 
-            '%Y-%m-%dT%H:%M:%S'
-        ),
-    }
+        task_summary = task_information_splits[1]
+        task_duration = float(task_information_splits[2])
+        task_date = datetime.datetime.strptime(
+            event['start']['date'],
+            '%Y-%m-%d'
+        )
+
+        task_id = event['id']
+        task_start_time = datetime.datetime(
+            year=task_date.year,    
+            month=task_date.month,
+            day=task_date.day,
+            hour=0
+        )
+        task_end_time = task_start_time + datetime.timedelta(hours=task_duration)
+
+        return {
+            'id': task_id,
+            'summary': task_summary,
+            'start': task_start_time,
+            'end': task_end_time, 
+        } 
+    else:
+        return {
+            'id': event['id'],
+            'summary': event['summary'],
+
+            # strip timezone off of the string and parse as datetime 
+            'start': datetime.datetime.strptime(
+                event['start']['dateTime'][:-6], 
+                '%Y-%m-%dT%H:%M:%S'
+            ),
+            'end': datetime.datetime.strptime(
+                event['end']['dateTime'][:-6], 
+                '%Y-%m-%dT%H:%M:%S'
+            ),
+        }
 
 
 def test_command_line_defaults() -> None:
@@ -229,6 +320,8 @@ class Jiro:
             time_now = datetime.datetime.now()
             get_calendar_analytics(time_now, time_now + datetime.timedelta(days=7))
             print("\n")
+        elif intent == ADD_TASK:
+            run_task_manager_cmdline()
         elif intent == RUN_TEST:
             print("running test")
         else:
@@ -247,6 +340,8 @@ class Jiro:
             return EVENTS_INTENT
         elif input_string == "analyze week":
             return ANALYZE_WEEK_INTENT
+        elif input_string == "add task":
+            return ANALYZE_WEEK_INTENT
         else:
             return UNKNOWN_INTENT
     
@@ -255,11 +350,33 @@ class Jiro:
 RUN_TEST = "RunTest"
 EVENTS_INTENT = "EventsToday"
 ANALYZE_WEEK_INTENT = "AnalyzeWeek"
+ADD_TASK = "AddTask"
 QUIT_INTENT = "Quit"
 UNKNOWN_INTENT = "Unknown"
 PACIFIC_TZ = "US/Pacific"
 TIME_ZONE = pytz.timezone('US/Pacific')
 # TIME_ZONE = None
+
+def helper_parse_input_for_date(user_input: str) -> datetime:
+    date = None
+
+    if user_input == "" or user_input == "today":
+        date = datetime.datetime.today()
+    else:
+        try:
+            date = datetime.datetime.strptime(user_input, "%Y-%m-%d")
+        except:
+            print("Unrecognized date... exiting")
+            return None
+
+    return date
+
+
+def helper_event_is_task(event) -> bool:
+    event_summary = event['summary']
+
+    return len(event_summary) >= 4 and event_summary[:4] == "TASK"
+
 
 if __name__ == "__main__":
     main()
