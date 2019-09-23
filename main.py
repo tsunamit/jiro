@@ -19,11 +19,12 @@ def main():
 
     # execution loop
     while(1):
-        sys.stdout.write("> ")
+        sys.stdout.write("\n> ")
         sys.stdout.flush()
         user_input: str = sys.stdin.readline()
 
         assistant.input_handler(user_input)
+
 
 
 def run_task_add_cmdline() -> None:
@@ -31,16 +32,22 @@ def run_task_add_cmdline() -> None:
     sys.stdout.flush()
     task_name: str = sys.stdin.readline().rstrip()
 
-    sys.stdout.write("Task date: ")
+    sys.stdout.write("Task due date: ")
     sys.stdout.flush()
     # TODO: finish getting date and finish modding task manager to acceept date as a param 
     task_date: str = helper_parse_input_for_date(sys.stdin.readline().rstrip())
+    if not task_date:
+        return
 
     sys.stdout.write("Task cost: ")
     sys.stdout.flush()
-    task_hours: float = float(sys.stdin.readline().rstrip())
+    try:
+        task_hours: float = float(sys.stdin.readline().rstrip())
+    except:
+        print("Unrecognized hour count...")
+        return
 
-    print("TODO do something")
+    scheduler_module.add_task(task_name, task_date, task_hours)
     
 
 def run_calendar_analytics_cmdline() -> None:
@@ -53,35 +60,28 @@ def run_calendar_analytics_cmdline() -> None:
     sys.stdout.flush()
     date_user_input: str = sys.stdin.readline().rstrip()
 
-    if date_user_input == "today":
-        target_start_date = datetime.datetime.today()
-    else:
-        try:
-            target_start_date = datetime.datetime.strptime(date_user_input, "%Y-%m-%d")
-        except:
-            print("Unrecognized date... exiting")
-            return
+    target_start_date = helper_parse_input_for_date(date_user_input)
+    if not target_start_date:
+        return
 
     # get end date
     sys.stdout.write("Enter end date (press 'Enter' for today): ")
     sys.stdout.flush()
     date_user_input: str = sys.stdin.readline().rstrip()
 
-    if date_user_input == "" or date_user_input == "today":
-        target_start_date = datetime.datetime.today()
-    else:
-        try:
-            target_start_date = datetime.datetime.strptime(date_user_input, "%Y-%m-%d")
-        except:
-            print("Unrecognized date... exiting")
-            return
+    target_end_date = helper_parse_input_for_date(date_user_input)
+    if not target_end_date:
+        return
 
-    scheduler_module.get_calendar_analytics(target_start_date, target_end_date)
-
-
+    schedule_analytics: DayAnalytics = scheduler_module.get_calendar_analytics(target_start_date, target_end_date)
+    print(
+        f"\nTotal committed hours: {schedule_analytics.get_committed_hours()}h"
+        + f"\nTotal uncommitted hours: {schedule_analytics.get_uncommitted_hours()}h"
+    )
 
 
 class Scheduler:
+    # TODO: a config to customize the scheduler
     def __init__(self) -> None:
         self.__auth_credentials = self.__getAuthCredentials()
         self.__endpoint = build('calendar', 'v3', credentials=self.__auth_credentials)
@@ -97,6 +97,11 @@ class Scheduler:
     def get_calendar_analytics(self, target_start_date: datetime, target_end_date: datetime = None):
         if target_end_date == None:
             target_end_date = target_start_date
+        
+        # TODO: this doesn't work
+        if target_end_date < target_start_date:
+            print("We can't time travel. Make sure end date comes after the start date")
+            return
 
         # filter for non-all day events
         events = filter(
@@ -116,7 +121,7 @@ class Scheduler:
             print(event_synopsis_string)
             day_analytics.total_committed_time += event_length_seconds
 
-        print(f"Total committed hours: {day_analytics.getCommittedHours()}")
+        return day_analytics
 
 
     def add_task(
@@ -265,11 +270,85 @@ class Scheduler:
     
     
 class DayAnalytics:
-    def __init__(self, total_committed_time=0):
+    def __init__(self, total_committed_time=0, target_sleep_hours=7):
         self.total_committed_time = total_committed_time
+        self.target_sleep_hours = target_sleep_hours
+        self.daily_available_hours = 24 - target_sleep_hours - LIFE_ESSENTIALS_TIME
 
-    def getCommittedHours(self):
+    def get_committed_hours(self):
         return self.total_committed_time / 3600.0
+    
+    def get_uncommitted_hours(self):
+        return self.daily_available_hours - self.get_committed_hours()
+
+
+class Jiro:
+    def __init__(self):
+        return
+
+    def input_handler(self, input_string: str) -> None:
+        input_string: str = input_string.rstrip()
+
+        intent: str = self.get_intent(input_string)
+
+        if intent == QUIT_INTENT:
+            quit(0)
+        elif intent == UNKNOWN_INTENT:
+            print("Unrecognized intent")
+        elif intent == EVENTS_INTENT:
+            run_calendar_analytics_cmdline()
+        elif intent == ANALYZE_WEEK_INTENT:
+            print("\nAnalyzing your week...\n")
+            time_now = datetime.datetime.now()
+            scheduler_module.get_calendar_analytics(time_now, time_now + datetime.timedelta(days=7))
+            print("\n")
+        elif intent == ADD_TASK_INTENT:
+            run_task_add_cmdline()
+        elif intent == RUN_TEST:
+            print("running test")
+        else:
+            print("Invalid intent state")
+
+        return None
+    
+
+    def get_intent(self, input_string: str) -> str:
+        # TODO use NLP to get intent. For now just use string
+        if input_string == "quit" or input_string == "exit":
+            return QUIT_INTENT 
+        elif input_string == "test":
+            return RUN_TEST
+        elif input_string == "events":
+            return EVENTS_INTENT
+        elif input_string == "analyze week":
+            return ANALYZE_WEEK_INTENT
+        elif input_string == "add task":
+            return ADD_TASK_INTENT 
+        else:
+            return UNKNOWN_INTENT
+
+
+def helper_parse_input_for_date(user_input: str) -> datetime:
+    date = None
+
+    if user_input == "" or user_input == "today":
+        date = datetime.datetime.today()
+    elif user_input == "tomorrow":
+        date = datetime.datetime.today() + datetime.timedelta(days=1)
+    else:
+        try:
+            date = datetime.datetime.strptime(user_input, "%Y-%m-%d")
+        except:
+            print("Unrecognized date... exiting")
+            return None
+
+    return date
+
+
+def helper_event_is_task(event) -> bool:
+    event_summary = event['summary']
+
+    return len(event_summary) >= 4 and event_summary[:4] == "TASK"
 
 
 def test_command_line_defaults() -> None:
@@ -300,82 +379,17 @@ def run_tests():
     print("All tests passed!\n")
 
 
-class Jiro:
-    def __init__(self):
-        return
-
-    def input_handler(self, input_string: str) -> None:
-        input_string: str = input_string.rstrip()
-
-        intent: str = self.get_intent(input_string)
-
-        if intent == QUIT_INTENT:
-            quit(0)
-        elif intent == UNKNOWN_INTENT:
-            print("Unrecognized intent")
-        elif intent == EVENTS_INTENT:
-            run_calendar_analytics_cmdline()
-        elif intent == ANALYZE_WEEK_INTENT:
-            print("\nAnalyzing your week...\n")
-            time_now = datetime.datetime.now()
-            scheduler_module.get_calendar_analytics(time_now, time_now + datetime.timedelta(days=7))
-            print("\n")
-        elif intent == ADD_TASK:
-            run_task_add_cmdline()
-        elif intent == RUN_TEST:
-            print("running test")
-        else:
-            print("Invalid intent state")
-
-        return None
-    
-
-    def get_intent(self, input_string: str) -> str:
-        # TODO use NLP to get intent. For now just use string
-        if input_string == "quit" or input_string == "exit":
-            return QUIT_INTENT 
-        elif input_string == "test":
-            return RUN_TEST
-        elif input_string == "events":
-            return EVENTS_INTENT
-        elif input_string == "analyze week":
-            return ANALYZE_WEEK_INTENT
-        elif input_string == "add task":
-            return ANALYZE_WEEK_INTENT
-        else:
-            return UNKNOWN_INTENT
-    
-
 
 RUN_TEST = "RunTest"
 EVENTS_INTENT = "EventsToday"
 ANALYZE_WEEK_INTENT = "AnalyzeWeek"
-ADD_TASK = "AddTask"
+ADD_TASK_INTENT = "AddTask"
 QUIT_INTENT = "Quit"
 UNKNOWN_INTENT = "Unknown"
 PACIFIC_TZ = "US/Pacific"
 TIME_ZONE = pytz.timezone('US/Pacific')
-# TIME_ZONE = None
 
-def helper_parse_input_for_date(user_input: str) -> datetime:
-    date = None
-
-    if user_input == "" or user_input == "today":
-        date = datetime.datetime.today()
-    else:
-        try:
-            date = datetime.datetime.strptime(user_input, "%Y-%m-%d")
-        except:
-            print("Unrecognized date... exiting")
-            return None
-
-    return date
-
-
-def helper_event_is_task(event) -> bool:
-    event_summary = event['summary']
-
-    return len(event_summary) >= 4 and event_summary[:4] == "TASK"
+LIFE_ESSENTIALS_TIME = 2
 
 
 if __name__ == "__main__":
